@@ -29,8 +29,8 @@ namespace TestRail
         public event EventHandler<string> OnHTTPResponseReceived = (s, e) => { };
 
         /// <summary>called when an operation fails</summary>
-        public event EventHandler<string> OnOperationFailed = (s, e) => { };
-
+        public event EventHandler<WebException> OnOperationFailed = (s, e) => { throw e; };
+        
         /// <summary>event args for http request sent</summary>
         public class HTTPRequestSentEventArgs : EventArgs
         {
@@ -137,7 +137,7 @@ namespace TestRail
             TimeSpan? elapsed = null, string defects = null, ulong? assignedToID = null, JObject customs = null)
         {
             var uri = _CreateUri_(_CommandType_.add, "result", testID);
-            var r = new Result { TestID = testID, StatusID = (ulong?)status, Comment = comment, Version = version, Elapsed = elapsed, Defects = defects, AssignedToID = assignedToID };
+            var r = new Result { TestID = testID, StatusID = (ResultStatus?)status, Comment = comment, Version = version, Elapsed = elapsed, Defects = defects, AssignedToID = assignedToID };
             var jsonParams = JsonUtility.Merge(r.GetJson(), customs);
             return _SendCommand(uri, jsonParams);
         }
@@ -157,9 +157,49 @@ namespace TestRail
             TimeSpan? elapsed = null, string defects = null, ulong? assignedToID = null, JObject customs = null)
         {
             var uri = _CreateUri_(_CommandType_.add, "result_for_case", runID, caseID);
-            var r = new Result { StatusID = (ulong?)status, Comment = comment, Version = version, Elapsed = elapsed, Defects = defects, AssignedToID = assignedToID };
+            var r = new Result { StatusID = (ResultStatus?)status, Comment = comment, Version = version, Elapsed = elapsed, Defects = defects, AssignedToID = assignedToID };
             var jsonParams = JsonUtility.Merge(r.GetJson(), customs);
             return _SendCommand(uri, jsonParams);
+        }
+
+        /// <summary>
+        /// Adds new test results for many tests. Remember to add Test_Ids and not Case_Ids.
+        /// </summary>
+        /// <param name="runID"></param>
+        /// <param name="results"></param>
+        /// <param name="customs"></param>
+        /// <returns></returns>
+        public List<Result> AddResults(ulong runID, IEnumerable<Result> results, JObject customs = null)
+        {
+            var node_name = "results";
+            var uri = _CreateUri_(_CommandType_.add, node_name, runID);
+            var resultsAsJArray = new JArray();
+            foreach (var result in results)
+            {
+                resultsAsJArray.Add(result.GetJson());
+            }
+            var jsonParams = JObject.Parse(string.Concat("{'results':", resultsAsJArray, "}"));
+            return _AddItems_(node_name, uri, Result.Parse, jsonParams);
+        }
+
+        /// <summary>
+        /// Adds new test results for many tests cases. Remember to add Case_Ids and not Test_Ids.
+        /// </summary>
+        /// <param name="runID"></param>
+        /// <param name="results"></param>
+        /// <param name="customs"></param>
+        /// <returns></returns>
+        public List<Result> AddResultsForCases(ulong runID, IEnumerable<Result> results)
+        {
+            var node_name = "results_for_cases";
+            var uri = _CreateUri_(_CommandType_.add, node_name, runID);
+            var resultsAsJArray = new JArray();
+            foreach (var result in results)
+            {
+                resultsAsJArray.Add(result.GetJson());
+            }
+            var jsonParams = JObject.Parse(string.Concat("{'results':", resultsAsJArray, "}"));
+            return _AddItems_(node_name, uri, Result.Parse, jsonParams);
         }
 
         /// <summary>adds a run</summary>
@@ -468,14 +508,7 @@ namespace TestRail
             var uri = _CreateUri_(_CommandType_.close, _NODE_PLAN_, planID);
 
             var result = _CallPostEndpoint(uri);
-            if (result.WasSuccessful)
-            {
-                var json = JObject.Parse(result.Value);
-                return result.WasSuccessful;
-            }
-
-            OnOperationFailed(this, $"Could not close plan : {result.Value}");
-            return false;
+            return result.WasSuccessful;
         }
 
         /// <summary>closes a run</summary>
@@ -485,14 +518,7 @@ namespace TestRail
         {
             var uri = _CreateUri_(_CommandType_.close, _NODE_RUN_, runID);
             var result = _CallPostEndpoint(uri);
-            if (result.WasSuccessful)
-            {
-                var json = JObject.Parse(result.Value);
-                return result.WasSuccessful;
-            }
-
-            OnOperationFailed(this, $"Could not close run : {result.Value}");
-            return false;
+            return result.WasSuccessful;
         }
         #endregion Close Commands
 
@@ -859,12 +885,6 @@ namespace TestRail
             where T : BaseTestRailType, new()
         {
             var result = _CallTestRailGetEndpoint(uri);
-            if (!result.WasSuccessful)
-            {
-                OnOperationFailed(this, $"Could not get {nodeName}: {result.Value}");
-                return default(T);
-            }
-
             var json = JObject.Parse(result.Value);
             return parse(json);
         }
@@ -883,18 +903,12 @@ namespace TestRail
             var items = new List<T>();
             var result = _CallTestRailGetEndpoint(uri);
 
-            if (!result.WasSuccessful)
+            var jarray = JArray.Parse(result.Value);
+            if (null != jarray)
             {
-                OnOperationFailed(this, $"Could not get {nodeName}s: {result.Value}");
+                items = JsonUtility.ConvertJArrayToList(jarray, parse);
             }
-            else
-            {
-                var jarray = JArray.Parse(result.Value);
-                if (null != jarray)
-                {
-                    items = JsonUtility.ConvertJArrayToList(jarray, parse);
-                }
-            }
+
             return items;
         }
 
@@ -979,30 +993,42 @@ namespace TestRail
             uri = _URL_ + uri;
             OnHTTPRequestSent(this, new HTTPRequestSentEventArgs("GET", new Uri(uri)));
             CommandResult cr;
+            
+            var request = (HttpWebRequest)WebRequest.Create(uri);
+            request.AllowAutoRedirect = true;
+            var authInfo = Convert.ToBase64String(Encoding.Default.GetBytes($"{_UserName_}:{_Password_}"));
+            request.Headers["Authorization"] = $"Basic {authInfo}";
+            request.UserAgent = "TestRail Client for .NET";
+            request.Method = "GET";
+            request.Accept = "application/json";
+            request.ContentType = "application/json";
+            
             try
             {
-                var request = (HttpWebRequest)WebRequest.Create(uri);
-                request.AllowAutoRedirect = true;
-                var authInfo = Convert.ToBase64String(Encoding.Default.GetBytes($"{_UserName_}:{_Password_}"));
-                request.Headers["Authorization"] = $"Basic {authInfo}";
-                request.UserAgent = "TestRail Client for .NET";
-                request.Method = "GET";
-                request.Accept = "application/json";
-                request.ContentType = "application/json";
-
                 // receive the response
                 var response = (HttpWebResponse)request.GetResponse();
                 var responseDataStream = response.GetResponseStream();
                 var reader = new StreamReader(responseDataStream);
                 var responseFromServer = reader.ReadToEnd();
-                cr = new CommandResult(response.StatusCode == HttpStatusCode.OK, responseFromServer);
+
+                if (response.StatusCode == HttpStatusCode.OK)
+                {
+                    cr = new CommandResult(response.StatusCode == HttpStatusCode.OK, responseFromServer);
+                }
+                else
+                {
+                    cr = new CommandResult(
+                        response.StatusCode == HttpStatusCode.OK, 
+                        responseFromServer,
+                        new WebException("Get Failed.", null, WebExceptionStatus.UnknownError, response ));
+                }
                 reader.Close();
                 response.Close();
             }
-            catch (Exception e) { cr = new CommandResult(false, e.ToString()); }
+            catch (Exception e) { cr = new CommandResult(false, e.ToString(),e); }
             if (!cr.WasSuccessful)
             {
-                OnOperationFailed(this, $"HTTP RESPONSE: {cr.Value}");
+                OnOperationFailed(this, (WebException)cr.Exception);
             }
             else
             {
@@ -1053,14 +1079,24 @@ namespace TestRail
                 var responseDataStream = response.GetResponseStream();
                 var reader = new StreamReader(responseDataStream);
                 var responseFromServer = reader.ReadToEnd();
-                cr = new CommandResult(response.StatusCode == HttpStatusCode.OK, responseFromServer);
+                if (response.StatusCode == HttpStatusCode.OK)
+                {
+                    cr = new CommandResult(response.StatusCode == HttpStatusCode.OK, responseFromServer);
+                }
+                else
+                {
+                    cr = new CommandResult(
+                        response.StatusCode == HttpStatusCode.OK,
+                        responseFromServer,
+                        new WebException("Post Failed.", null, WebExceptionStatus.UnknownError, response));
+                }
                 reader.Close();
                 response.Close();
             }
-            catch (Exception e) { cr = new CommandResult(false, e.ToString()); }
+            catch (Exception e) { cr = new CommandResult(false, e.ToString(),e); }
             if (!cr.WasSuccessful)
             {
-                OnOperationFailed(this, $"HTTP RESPONSE: {cr.Value}");
+                OnOperationFailed(this, (WebException)cr.Exception);
             }
             else
             {
@@ -1068,7 +1104,30 @@ namespace TestRail
             }
             return cr;
         }
+        /// <summary>executes a get request for an item</summary>
+        /// <typeparam name="T">the type of the item</typeparam>
+        /// <param name="nodeName">the name of the item's node</param>
+        /// <param name="parse">a method which parses the json into the item</param>
+        /// <param name="id1">the id of the first item on which to filter the get request</param>
+        /// <param name="id2">the id of the second item on which to filter the get request</param>
+        /// <param name="options">additional options to append to the get request</param>
+        /// <returns>list of objects of the supplied type corresponding th supplied filters</returns>
+        private List<T> _AddItems_<T>(string nodeName, string uri, Func<JObject, T> parse, JObject jsonParams)
+            where T : BaseTestRailType, new()
+        {
+            var items = new List<T>();
+            var result = _CallPostEndpoint(uri, jsonParams); ;
+            if (result.WasSuccessful)
+            {
+                var jarray = JArray.Parse(result.Value);
+                if (null != jarray)
+                {
+                    items = JsonUtility.ConvertJArrayToList(jarray, parse);
+                }
+            }
 
+            return items;
+        }
         /// <summary>Send a command to the server</summary>
         /// <param name="uri">uri to send</param>
         /// <param name="jsonParams">parameter</param>

@@ -13,8 +13,11 @@ namespace TestRail.Types
         /// <summary>ID of the test</summary>
         public ulong TestID { get; set; }
 
+        /// <summary>ID of the Test Case the result is associated with</summary>
+        public ulong? CaseID { get; set; }
+
         /// <summary>ID of the test status</summary>
-        public ulong? StatusID { get; set; }
+        public ResultStatus? StatusID { get; set; }
 
         /// <summary>created by</summary>
         public ulong? CreatedBy { get; set; }
@@ -58,7 +61,8 @@ namespace TestRail.Types
                 JsonFromResponse = json,
                 ID = (ulong)json["id"],
                 TestID = (ulong)json["test_id"],
-                StatusID = (ulong?)json["status_id"],
+                CaseID = (ulong?)json["case_id"],
+                StatusID = (ResultStatus?)Enum.Parse(typeof(ResultStatus),(string)json["status_id"]),
                 CreatedBy = (ulong?)json["created_by"],
                 CreatedOn = null == (int?)json["created_on"] ? (DateTime?)null : new DateTime(1970, 1, 1).AddSeconds((int)json["created_on"]),
                 AssignedToID = (ulong?)json["assignedto_id"],
@@ -78,6 +82,7 @@ namespace TestRail.Types
         {
             dynamic jsonParams = new JObject();
             if (null != StatusID) { jsonParams.status_id = (int)StatusID; }
+            if (null != CaseID) { jsonParams.case_id = (int)CaseID; }
             if (null != Comment) { jsonParams.comment = Comment; }
             if (null != Version) { jsonParams.version = Version; }
             if (null != Elapsed) { jsonParams.elapsed = $"{Elapsed.Value.Days}d {Elapsed.Value.Hours}h {Elapsed.Value.Minutes}m {Elapsed.Value.Seconds}s" ; }
