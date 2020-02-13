@@ -8,12 +8,17 @@
     <Title>TestRail Client</Title>
     <Authors>TestRail Client Committers</Authors>
     <PackageLicenseUrl>http://www.apache.org/licenses/LICENSE-2.0.html</PackageLicenseUrl>
-    <RepositoryUrl>https://github.com/zoosk/testrail-client</RepositoryUrl>
+    <RepositoryUrl>https://github.com/DeverJylha/testrail-client.git</RepositoryUrl>
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
     <Description>.Net Standard implementation of the TestRail API</Description>
     <PackageReleaseNotes>
-      ##2.0.6 - Dever
-      ##2.0.5
+    ##2.0.6 
+      - Added Batch Results by Test Ids
+      - Added Batch Results by Case Ids
+        -modified the Result Class to contain CaseIds
+      - Modified the Command Result To return the exception thrown (allowing for throttle cap to be dealt with)
+      - Allowed for collections of items to be returned instead of the command result.
+    ##2.0.5
       - Make GetSections's suiteID parameter optional.
     ##2.0.4
       - Add offset parameter to GetRuns method (allows ability to get more than 250 most recent runs) 
